@@ -1,1 +1,5 @@
-This is a library for me to start aggregating all of my pi library code
+Raspberry Pi Library Code
+Scott Baker, http://www.smbaker.com/
+
+This repository contains common library functions that I use in my various 
+Raspberry Pi projects. I put them in a common place to make reuse easier.
