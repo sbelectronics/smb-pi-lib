@@ -53,10 +53,9 @@ class TLC59116(object):
     def set_led_state(self, led, state):
         reg = (led / 4) + REG_LEDOUT0
         shift = (led % 4) * 2
-        print shift, state<<shift
         v = self.read_reg(reg)
         v = v & (~(3 << shift)) | (state << shift)
-        print "write mode reg %x %x" % (reg, v)
+        # print "write mode reg %x %x" % (reg, v)
         self.write_reg(reg, v)
 
     def set_led_pwm(self, led, brightness):
@@ -83,7 +82,7 @@ def help():
     print "    blink <rate>"
     print "    noblink"
     print "    grppwm <pwmval>"
-    print "    cyclon"
+    print "    cylon"
     print "    oscoff"
 
 def main():
@@ -115,17 +114,22 @@ def main():
         else:
             raise Exception("unknown mode")
 
-        pwm = int(sys.argv[4])
+        if (mode in [STATE_PWM, STATE_GRP]):
+            pwm = int(sys.argv[4])
+        else:
+            pwm = None
 
         leds.set_oscillator(True)
 
         if (led=="all"):
             for i in range(0,15):
                 leds.set_led_state(i, mode)
-                leds.set_led_pwm(i, pwm)
+                if pwm:
+                    leds.set_led_pwm(i, pwm)
         else:
             leds.set_led_state(led, mode)
-            leds.set_led_pwm(led, pwm)
+            if pwm:
+                leds.set_led_pwm(led, pwm)
     elif (sys.argv[1] == "blink"):
         leds.set_blink(True)
         leds.set_grppwm(128)
