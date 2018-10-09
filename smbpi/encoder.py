@@ -13,11 +13,12 @@ PIN_ENC_B2 = 16
 
 class EncoderHandler(object):
 
-    def __init__(self, pin_a=PIN_ENC_A, pin_b=PIN_ENC_B, min_pos=None, max_pos=None):
+    def __init__(self, pin_a=PIN_ENC_A, pin_b=PIN_ENC_B, min_pos=None, max_pos=None, invert=False):
         self.pin_enc_a = pin_a
         self.pin_enc_b = pin_b
         self.min_position = min_pos
         self.max_position = max_pos
+        self.invert = invert
         GPIO.setup(self.pin_enc_a, GPIO.IN)
         GPIO.setup(self.pin_enc_b, GPIO.IN)
 
@@ -62,6 +63,8 @@ class EncoderHandler(object):
         self.remainder += self.get_delta()
         cycles = self.remainder // self.steps_per_cycle
         self.remainder %= self.steps_per_cycle # remainder always remains positive
+        if self.invert:
+            cycles = -cycles
         return cycles
 
     def update(self):
