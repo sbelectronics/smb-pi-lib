@@ -72,13 +72,16 @@ class EncoderHandler(object):
             self.position = self.min_position
         if (self.max_position is not None) and (self.position > self.max_position):
             self.position = self.max_position
+        return delta
 
 
 class EncoderThread(threading.Thread):
-    def __init__(self, encoders):
+    def __init__(self, encoders, store_points=False):
         super(EncoderThread,self).__init__()
         self.delay = 0.0001
         self.daemon = True
+        self.store_points = store_points
+        self.points = []
         self.lock = threading.Lock()
         self.handlers=[]
         for encoder in encoders:
@@ -87,10 +90,21 @@ class EncoderThread(threading.Thread):
 
     def run(self):
         while True:
+            something_changed = False
             for handler in self.handlers:
                 handler.poll_input()
                 with self.lock:
-                    handler.update()
+                    delta = handler.update()
+                    if delta != 0:
+                        something_changed = True
+
+            if (self.store_points) and (something_changed):
+                point = []
+                with self.lock:
+                    for handler in self.handlers:
+                        point.append(handler.position)
+                    self.points.append(point)
+
             time.sleep(self.delay)
 
     def get_delta(self, num):
@@ -101,6 +115,12 @@ class EncoderThread(threading.Thread):
 
     def get_position(self, num):
         return self.handlers[num].position
+
+    def get_points(self):
+        with self.lock:
+            points = self.points[:]
+            self.points = []
+        return points
 """ 
     main: 
 """
@@ -110,7 +130,8 @@ def main():
 
     encoder = EncoderThread(encoders
                             =[{"pin_a": PIN_ENC_A, "pin_b": PIN_ENC_B},
-                              {"pin_a": PIN_ENC_A2, "pin_b": PIN_ENC_B2}])
+                              {"pin_a": PIN_ENC_A2, "pin_b": PIN_ENC_B2}],
+                            store_points = True)
     encoder.start()
 
     last_delta = 0
@@ -118,6 +139,10 @@ def main():
     last_delta2 = 0
     last_position2 = 0
     while True:
+        points = encoder.get_points()
+        if points:
+            print points
+        """
         delta = encoder.get_delta(0)
         position = encoder.get_position(0)
         delta2 = encoder.get_delta(1)
@@ -128,6 +153,7 @@ def main():
             last_position = position
             last_delta2 = delta2
             last_position2 = position2
+        """
         time.sleep(0.01)
 
 
