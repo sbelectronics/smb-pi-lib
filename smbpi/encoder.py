@@ -1,6 +1,7 @@
 import math
 import threading
 import time
+import traceback
 import RPi.GPIO as GPIO
 
 # pin numbers from scott's e-paper project
@@ -13,20 +14,31 @@ PIN_ENC_B2 = 16
 
 class EncoderHandler(object):
 
-    def __init__(self, pin_a=PIN_ENC_A, pin_b=PIN_ENC_B, min_pos=None, max_pos=None, invert=False):
+    def __init__(self, pin_a=PIN_ENC_A, pin_b=PIN_ENC_B, pin_button=None, pud=GPIO.PUD_OFF, min_pos=None, max_pos=None, invert=False, num=0, thread=None):
+        self.num = num
+        self.thread = thread
         self.pin_enc_a = pin_a
         self.pin_enc_b = pin_b
+        self.pin_button = pin_button
         self.min_position = min_pos
         self.max_position = max_pos
         self.invert = invert
-        GPIO.setup(self.pin_enc_a, GPIO.IN)
-        GPIO.setup(self.pin_enc_b, GPIO.IN)
+        GPIO.setup(self.pin_enc_a, GPIO.IN, pull_up_down=pud)
+        GPIO.setup(self.pin_enc_b, GPIO.IN, pull_up_down=pud)
+        if self.pin_button:
+            GPIO.setup(self.pin_button, GPIO.IN, pull_up_down=pud)
 
         self.a_state = 0
         self.b_state = 0
+        self.button_state = 1
 
         self.position = 0
         self.delta = 0
+
+        # button history
+        self.last_button_poll_state = self.button_state
+        self.button_up_event = False
+        self.button_down_event = False
 
         # encoder init
         self.poll_input()
@@ -38,6 +50,8 @@ class EncoderHandler(object):
     def poll_input(self):
         self.a_state = GPIO.input(self.pin_enc_a)
         self.b_state = GPIO.input(self.pin_enc_b)
+        if self.pin_button:
+            self.button_state = GPIO.input(self.pin_button)
 
     def rotation_sequence(self):
         r_seq = (self.a_state ^ self.b_state) | self.b_state << 1
@@ -77,6 +91,19 @@ class EncoderHandler(object):
             self.position = self.max_position
         return delta
 
+    def update_button(self):
+        something_happened = False
+        if self.button_state != self.last_button_poll_state:
+            self.last_button_poll_state = self.button_state
+            if self.button_state:
+                if not self.button_up_event:
+                    self.button_up_event = True
+                    something_happened = True
+            else:
+                if not self.button_down_event:
+                    self.button_down_event = True
+                    something_happened = True
+        return something_happened
 
 class EncoderThread(threading.Thread):
     def __init__(self, encoders, store_points=False):
@@ -88,11 +115,16 @@ class EncoderThread(threading.Thread):
         self.lock = threading.Lock()
         self.handlers=[]
         for encoder in encoders:
-            handler = EncoderHandler(**encoder)
+            handler = EncoderHandler(num=len(self.handlers), thread=self, **encoder)
             self.handlers.append(handler)
+
+    def updated(self, handler):
+        # override me
+        pass
 
     def run(self):
         while True:
+            need_notify = []
             something_changed = False
             for handler in self.handlers:
                 handler.poll_input()
@@ -100,13 +132,23 @@ class EncoderThread(threading.Thread):
                     delta = handler.update()
                     if delta != 0:
                         something_changed = True
+                        need_notify.append(handler)
 
+                    if handler.update_button():
+                        if handler not in need_notify:
+                            need_notify.append(handler)
+
+            # this stores a vector of all encoders, so they can be read at once
             if (self.store_points) and (something_changed):
                 point = []
                 with self.lock:
                     for handler in self.handlers:
                         point.append(handler.position)
                     self.points.append(point)
+
+            # call these outside of self.lock
+            for handler in need_notify:
+                self.updated(handler)
 
             time.sleep(self.delay)
 
@@ -115,6 +157,18 @@ class EncoderThread(threading.Thread):
             delta = self.handlers[num].delta
             self.handlers[num].delta = 0
         return delta
+
+    def get_button_down_event(self, num):
+        with self.lock:
+            event = self.handlers[num].button_down_event
+            self.handlers[num].button_down_event = False
+        return event
+
+    def get_button_up_event(self, num):
+        with self.lock:
+            event = self.handlers[num].button_up_event
+            self.handlers[num].button_up_event = False
+        return event
 
     def get_position(self, num):
         return self.handlers[num].position
@@ -135,6 +189,10 @@ def main():
                             =[{"pin_a": PIN_ENC_A, "pin_b": PIN_ENC_B},
                               {"pin_a": PIN_ENC_A2, "pin_b": PIN_ENC_B2}],
                             store_points = True)
+    #encoder = EncoderThread(encoders
+    #                        =[{"pin_a": 18, "pin_b": 23, "pud": GPIO.PUD_UP},
+    #                          ],
+    #                        store_points = True)
     encoder.start()
 
     last_delta = 0
