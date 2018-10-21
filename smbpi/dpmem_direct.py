@@ -10,8 +10,9 @@ WPI_IN = 0
 WPI_OUT = 1
 
 class DualPortMemory():
-  def __init__(self, n_address_bits=10, enable_reset=True):
+  def __init__(self, n_address_bits=10, enable_reset=True, support_read=True):
       self.n_address_bits = n_address_bits
+      self.support_read = support_read
 
       wiringpi.wiringPiSetupGpio()
       for i in range(0, n_address_bits):
@@ -20,15 +21,18 @@ class DualPortMemory():
       for datapin in DP_DATAPINS:
           wiringpi.pinMode(datapin, WPI_IN)
 
-      for controlpin in DP_CONTROLPINS:
-          wiringpi.pinMode(controlpin, WPI_OUT)
+      wiringpi.pinMode(DP_W, WPI_OUT)
+      wiringpi.pinMode(DP_CE, WPI_OUT)
+
+      wiringpi.digitalWrite(DP_W, 1)
+      wiringpi.digitalWrite(DP_CE, 1)
+
+      if self.support_read:
+          wiringpi.pinMode(DP_R, WPI_OUT)
+          wiringpi.digitalWrite(DP_R, 1)
 
       wiringpi.pinMode(DP_INTR, WPI_IN)
       wiringpi.pullUpDnControl(DP_INTR, 2)
-
-      wiringpi.digitalWrite(DP_W, 1)
-      wiringpi.digitalWrite(DP_R, 1)
-      wiringpi.digitalWrite(DP_CE, 1)
 
       if (enable_reset):
           wiringpi.pinMode(ISA_RESET, WPI_OUT)
