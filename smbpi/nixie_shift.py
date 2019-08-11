@@ -17,13 +17,37 @@ PIN_DATA = 23
 PIN_LATCH = 25 #24 breadboard
 PIN_CLK = 24 #25 breadboard
 
+PIN_DP6 = 14
+PIN_DP7 = 15
+PIN_POWCTL = 18
+PIN_DP1 = 2
+PIN_DP2 = 3
+
 class NixieShift(object):
-    def __init__(self, pin_data, pin_latch, pin_clk, digits, flipRows):
+    def __init__(self, pin_data, pin_latch, pin_clk, digits, flipRows, blank=[], 
+                 pin_dp6 = PIN_DP6, pin_dp7 = PIN_DP7,
+                 pin_dp1 = PIN_DP1, pin_dp2 = PIN_DP2,
+                 pin_powctl = PIN_POWCTL,
+                 enable_rev2 = False):
         self.pin_data = pin_data
         self.pin_latch = pin_latch
         self.pin_clk = pin_clk
         self.digits = digits
         self.flipRows = flipRows
+        self.blank = blank
+
+        self.pin_dp6 = pin_dp6
+        self.pin_dp7 = pin_dp7
+        self.pin_dp1 = pin_dp1
+        self.pin_dp2 = pin_dp2
+        self.pin_powctl = pin_powctl
+        self.enable_rev2 = enable_rev2
+
+        self.state_dp6= 0
+        self.state_dp7 = 0
+        self.state_dp1 = 0
+        self.state_dp2 = 0
+        self.state_powctl = 0
 
         GPIO.setmode(GPIO.BCM)
 
@@ -36,6 +60,19 @@ class NixieShift(object):
         GPIO.output(self.pin_data, False)
         GPIO.output(self.pin_latch, False)
         GPIO.output(self.pin_clk, False)
+
+        if (enable_rev2):
+            GPIO.setup(self.pin_dp6, GPIO.OUT)
+            GPIO.setup(self.pin_dp7, GPIO.OUT)
+            GPIO.setup(self.pin_dp1, GPIO.OUT)
+            GPIO.setup(self.pin_dp2, GPIO.OUT)
+            GPIO.setup(self.pin_powctl, GPIO.OUT)
+
+            self.set_dp(1, 0)
+            self.set_dp(2, 0)
+            self.set_dp(6, 0)
+            self.set_dp(7, 0)
+            self.set_powctl(0)
 
     def delay(self):
         # We'll use a 10ms delay for our clock
@@ -73,6 +110,11 @@ class NixieShift(object):
         value = value << 1
         self.shift_bit(value&0x08)
 
+    def set_blank(self, blank):
+        # Update the blanking digits
+        # This won't cause a display refresh -- be sure to also call set_value()
+        self.blank = blank
+
     def set_value(self, value):
         # Shift a decimal value into the register
 
@@ -81,15 +123,43 @@ class NixieShift(object):
         if self.flipRows:
             str = str[4:] + str[:4]
 
+        index = 1
         for digit in str:
-            self.shift_digit(int(digit))
+            if (index in self.blank):
+                self.shift_digit(12)
+            else:
+                self.shift_digit(int(digit))
+            index = index + 1
 
         self.transfer_latch()
+
+    def set_dp(self, n, v):
+        if self.enable_rev2:
+            vname = "pin_dp%d" % n
+            GPIO.output(getattr(self,vname), v)
+
+        vname = "state_dp%d" % n
+        setattr(self,vname, v)
+
+    def get_dp(self, n):
+        vname = "state_dp%d" % n
+        return getattr(self,vname)
+
+    def set_powctl(self, v):
+        if self.enable_rev2:
+            GPIO.output(self.pin_powctl, v)
+            
+        self.state_powctl = v
+
+    def get_powctl(self):
+        return self.state_powctl
+
 
 TEST_FIXED = "f"
 TEST_DIGMOVE = "m"
 TEST_COUNT = "c"
 TEST_ALL = "a"
+KEY_POWCTL = "p"
 
 testmode = TEST_FIXED
 
@@ -122,6 +192,20 @@ def testpatterns_8dig(nixie):
         if (key in [TEST_FIXED, TEST_DIGMOVE, TEST_COUNT,TEST_ALL]):
             testmode = key
 
+        if (key in ["1", "2", "6", "7"]):
+            cur = nixie.get_dp(int(key))
+            if cur == 0:
+                cur = 1
+            else:
+                cur = 0
+            nixie.set_dp(int(key), cur)
+
+        if key == KEY_POWCTL:
+            if nixie.get_powctl()!=0:
+                nixie.set_powctl(0)
+            else:
+                nixie.set_powctl(1)
+
         if (testmode==TEST_FIXED):
             nixie.set_value(12345678)
         elif (testmode==TEST_DIGMOVE):
@@ -145,7 +229,7 @@ def testpatterns_8dig(nixie):
 
 def main():
     try:
-        nixie = Nixie(PIN_DATA, PIN_LATCH, PIN_CLK, 8, True)
+        nixie = NixieShift(PIN_DATA, PIN_LATCH, PIN_CLK, 8, True, enable_rev2=True)
 
         # Uncomment for a simple test pattern
         # nixie.set_value(12345678)
