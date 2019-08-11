@@ -14,7 +14,7 @@ PIN_ENC_B2 = 16
 
 class EncoderHandler(object):
 
-    def __init__(self, pin_a=PIN_ENC_A, pin_b=PIN_ENC_B, pin_button=None, pud=GPIO.PUD_OFF, min_pos=None, max_pos=None, invert=False, num=0, thread=None):
+    def __init__(self, pin_a=PIN_ENC_A, pin_b=PIN_ENC_B, pin_button=None, pud=GPIO.PUD_OFF, button_pud=None, min_pos=None, max_pos=None, invert=False, num=0, thread=None):
         self.num = num
         self.thread = thread
         self.pin_enc_a = pin_a
@@ -25,8 +25,12 @@ class EncoderHandler(object):
         self.invert = invert
         GPIO.setup(self.pin_enc_a, GPIO.IN, pull_up_down=pud)
         GPIO.setup(self.pin_enc_b, GPIO.IN, pull_up_down=pud)
+
+        if not button_pud:
+            button_pud = pud
+            
         if self.pin_button:
-            GPIO.setup(self.pin_button, GPIO.IN, pull_up_down=pud)
+            GPIO.setup(self.pin_button, GPIO.IN, pull_up_down=button_pud)
 
         self.a_state = 0
         self.b_state = 0
