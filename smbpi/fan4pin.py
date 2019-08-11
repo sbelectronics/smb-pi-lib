@@ -18,7 +18,7 @@ FAN_RPM_PIN = 23
 
 
 class Fan4Pin(object):
-    def __init__(self, pi, pin=FAN_PWM_PIN, pin_rpm=FAN_RPM_PIN, weighting=0.1):
+    def __init__(self, pi, pin=FAN_PWM_PIN, pin_rpm=FAN_RPM_PIN, weighting=0.1, initial_pwm=255):
         self.pi = pi
         self.pin = pin
         self.pin_rpm = pin_rpm
@@ -42,7 +42,8 @@ class Fan4Pin(object):
             self.pi.set_pull_up_down(self.pin_rpm, pigpio.PUD_UP)
             self.enable_rpm()
 
-        self.set_pwm(255)
+        if initial_pwm is not None:
+            self.set_pwm(initial_pwm)
 
     def _set_pwm(self, v):
         # v is a value between 0 and 255
