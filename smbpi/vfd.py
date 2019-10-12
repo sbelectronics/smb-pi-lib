@@ -13,6 +13,8 @@ class VFD:
     def __init__(self, spi_num, spi_ce):
         self.spi = spidev.SpiDev()
         self.spi.open(spi_num, spi_ce)
+        # on raspberry pi zero w buster, speed was set to 1250000 and didn't work
+        self.spi.max_speed_hz = 500000
         self.setDisplay(True, False, False)
         self.setDirection(True, False)
 
