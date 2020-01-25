@@ -35,7 +35,7 @@ class MCP4821:
             GPIO.setup(self.ldaq, GPIO.OUT)
             GPIO.output(self.ldaq, GPIO.LOW)
 
-    def setOutput(self, val):
+    def SetValue(self, val):
         if self.gain == 2:
             gainBit = 0
         else:
@@ -66,6 +66,9 @@ class MCP4821:
 
         self.spi.xfer2([highByte, lowByte])
 
+    def SetVoltage(self, volts):
+        self.SetValue(self.voltageToValue(volts))
+
     def valueToVoltage(self, val):
         return float(val) * self.gain * self.vRef / self.resolution / 1000.0
 
@@ -85,7 +88,7 @@ def main():
     try:
         dac = MCP4821(spi)
 
-        dac.setOutput(v)
+        dac.SetValue(v)
 
         print "Voltage: %0.4f" % dac.valueToVoltage(v)
         print "Binary value : {0:12b} (12 bit)".format(v)
