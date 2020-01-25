@@ -69,6 +69,9 @@ class MCP4821:
     def valueToVoltage(self, val):
         return float(val) * self.gain * self.vRef / self.resolution / 1000.0
 
+    def voltageToValue(self, volts):
+        return int(float(volts)*1000.0*float(self.resolution)/float(self.vRef)/float(self.gain))
+
 
 def main():
     if len(sys.argv)<=1:
