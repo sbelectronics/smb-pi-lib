@@ -1,16 +1,16 @@
 """
-    ADS1015 driver
+    ADS1115 driver
     Scott Baker, http://www.smbaker.com/
 
-    Interface with ADS1015 chip.
+    Interface with ADS1115 chip.
 """
 
 import time
 
-REG_CONV=0
-REG_CONFIG=1
-REG_LO_THRESH=2
-REG_HI_THRESH=3
+REG_CONV = 0
+REG_CONFIG = 1
+REG_LO_THRESH = 2
+REG_HI_THRESH = 3
 
 OS = 1 << 15
 
@@ -33,13 +33,14 @@ PGA_02V = 0b101 << 9
 MODE_CONT = 0
 MODE_SINGLE = 1 << 8
 
-DATA_128 = 0b000 << 5
-DATA_250 = 0b001 << 5
-DATA_490 = 0b010 << 5
-DATA_920 = 0b011 << 5
-DATA_1600 = 0b100 << 5
-DATA_2400 = 0b101 << 5
-DATA_3300 = 0b110 << 5
+DATA_8 = 0b000 << 5
+DATA_16 = 0b001 << 5
+DATA_32 = 0b010 << 5
+DATA_64 = 0b011 << 5
+DATA_128 = 0b100 << 5
+DATA_250 = 0b101 << 5
+DATA_475 = 0b110 << 5
+DATA_860 = 0b111 << 5
 
 COMP_MODE_TRAD = 0
 COMP_MODE_WINDOW = 1 << 4
@@ -57,7 +58,8 @@ COMP_QUE_DISABLE = 3
 
 # default = MUX_AIN0_AIN1 | PGA_2V | MODE_SINGLE | DATA_1600 | COMP_MODE_TRAD | COMP_POL_LOW | COMP_NON_LAT | COMP_QUE_DISBALE
 
-class ADS1015:
+
+class ADS1115:
     def __init__(self, bus, addr):
         self.addr = addr
         self.bus = bus
@@ -70,23 +72,29 @@ class ADS1015:
 
     def get_data_rate(self):
         dr = self.lastConfig & (0b110 << 5)
-        if (dr == DATA_128):
+        if (dr == DATA_8):
+            return 8
+        elif (dr == DATA_16):
+            return 16
+        elif (dr == DATA_32):
+            return 32
+        elif (dr == DATA_64):
+            return 64
+        elif (dr == DATA_128):
             return 128
         elif (dr == DATA_250):
             return 250
-        elif (dr == DATA_490):
-            return 490
-        elif (dr == DATA_920):
-            return 920
-        elif (dr == DATA_1600):
-            return 1600
-        elif (dr == DATA_2400):
-            return 2400
+        elif (dr == DATA_475):
+            return 475
         else:
-            return 3300
+            return 860
 
     def wait_samp(self):
-        # NOTE: Might not be long enough
+        # note that this isn't enough -- I had to wait an additional 8ms at
+        # DATA_128 and an addition 32ms at DATA_32. This was while using
+        # MUX_AIN0_AIN3 and MUX_AIN1_AIN3, so maybe it takes twice as long
+        # to do a relative conversion.
+        # TODO: investigate
         time.sleep(1.0/self.get_data_rate()+0.0001)
 
     def read_conversion(self):
@@ -94,25 +102,23 @@ class ADS1015:
         val = (result[0] << 8) | (result[1] & 0xFF)
 
         # if the result >= 0x8000 then it's a negative number
-        # UNTESTED on ADS1015; taken from my ADS1115 module
         if (val >= 0x8000):
             val = -((~val & 0xFFFF) + 1)
 
-        # 12-bit ADC, so shift off the lower bits
-        val = val >> 4
-
         return val
+
 
 def main():
     import smbus
     import time
     bus = smbus.SMBus(1)
-    adc = ADS1015(bus, 0x48)
+    adc = ADS1115(bus, 0x48)
     adc.write_config(MUX_AIN0 | PGA_4V | MODE_CONT | DATA_1600 | COMP_MODE_TRAD | COMP_POL_LOW | COMP_NON_LAT | COMP_QUE_DISABLE)
     adc.wait_samp()
     while True:
         print "%d        \r" % adc.read_conversion()
         time.sleep(0.1)
+
 
 if __name__ == "__main__":
     main()
