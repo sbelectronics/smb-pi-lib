@@ -4,12 +4,17 @@
     Driver for Scott's VFD + Encoder pcboard
 
     http://www.smbaker.com/
+
+    NOTE: To prevent dropping encoder steps, add the following to /boot/config.txt
+       dtparam=i2c1=on
+       dtparam=i2c1_baudrate=400000
 """
 
 import math
 import threading
 import time
-from ioexpand import MCP23017
+from ioexpand import MCP23017, IOCON_MIRROR
+import RPi.GPIO as GPIO
 
 BIT_ENC_A = 0x01
 BIT_ENC_B = 0x02
@@ -47,6 +52,9 @@ class VFDController(object):
     def __init__(self, io):
         self.io = io
 
+        self.last_a = 0
+        self.last_b = 0
+
         self.lock = threading.Lock()
 
         self.io.set_iodir(0, BIT_ENC_A | BIT_ENC_B | BIT_ENC_SW | BIT_BUTTON1 | BIT_BUTTON2)
@@ -58,7 +66,8 @@ class VFDController(object):
         self.io.set_gpio(1,0)
 
         # encoder init
-        self.poll_input()
+        self.int_pin = None
+        self.poll_input(forced=True)
         self.last_delta = 0
         self.r_seq = self.rotation_sequence()
         self.steps_per_cycle = 4    # 4 steps between detents
@@ -162,7 +171,12 @@ class VFDController(object):
         with self.lock:
             self.io.set_gpio(0, color)
 
-    def poll_input(self):
+    def poll_input(self, forced=False):
+        # If interrupts are enabled and there is no interrupt, return
+        if (not forced) and (self.int_pin):
+            if GPIO.input(self.int_pin) == 1:
+                return
+
         with self.lock:
             bits = self.io.get_gpio(0)
             bits1 = self.io.get_gpio(1)
@@ -173,6 +187,27 @@ class VFDController(object):
         self.button1_state = (bits & BIT_BUTTON1) != 0
         self.button2_state = (bits & BIT_BUTTON2) != 0
         self.button3_state = (bits1 & BIT_BUTTON3) != 0
+
+        if (self.last_a != self.a_state) or (self.last_b != self.b_state):
+            #print "XXX A", self.a_state, "B", self.b_state
+            self.last_a = self.a_state
+            self.last_b = self.b_state
+
+    def enable_interrupts(self, pin):
+        self.io.set_interrupt(0, BIT_ENC_A | BIT_ENC_B | BIT_ENC_SW | BIT_BUTTON1 | BIT_BUTTON2)
+        self.io.set_intcon(0, 0) # all bits int-on-change
+        self.io.set_interrupt(1, BIT_BUTTON3)
+        self.io.set_intcon(1, 0) # all bits int-on-change
+        self.io.set_config(IOCON_MIRROR) # trigger both int pins together
+
+        GPIO.setup(pin, GPIO.IN)
+        self.int_pin = pin
+
+
+    def clear_interrupts(self):
+        # reading both gpio will clear the interrupt
+        self.io.get_gpio(0)
+        self.io.get_gpio(1)
 
     def rotation_sequence(self):
         r_seq = (self.a_state ^ self.b_state) | self.b_state << 1
@@ -203,6 +238,7 @@ class VFDController(object):
     def get_switchstate(self):
         # BasicEncoder doesn't have a switch
         return 0
+
 
 class Debouncer(object):
     # see http://www.embedded.com/electronics-blogs/break-points/4024981/My-favorite-software-debouncers
@@ -378,6 +414,9 @@ def main():
 
     bus = smbus.SMBus(1)
     display = VFDController(MCP23017(bus, 0x20))
+
+    #GPIO.setmode(GPIO.BCM)
+    #display.enable_interrupts(26)
 
     display.setDisplay(True, False, False)
     display.cls()
