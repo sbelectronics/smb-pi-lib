@@ -139,7 +139,11 @@ class VFDController(object):
         time.sleep(0.005)
 
     def setPosition(self, x, y):
-        self.writeCmd(0x80 | (0x40*y + x))
+        if (y>1):
+            self.writeCmd(0x80 | (0x40*(y-2) + x + 0x14))
+        else:
+            self.writeCmd(0x80 | (0x40*y + x))
+            
         time.sleep(0.005)
 
     def setDirection(self, leftToRight, autoScroll):
