@@ -49,7 +49,7 @@ E_TICK = 0 # 0.00001
 
 class VFDController(object):
 
-    def __init__(self, io):
+    def __init__(self, io, four_line=False):
         self.io = io
 
         self.last_a = 0
@@ -66,6 +66,7 @@ class VFDController(object):
         self.io.set_gpio(1,0)
 
         # encoder init
+        self.four_line = four_line
         self.int_pin = None
         self.poll_input(forced=True)
         self.last_delta = 0
@@ -139,8 +140,8 @@ class VFDController(object):
         time.sleep(0.005)
 
     def setPosition(self, x, y):
-        if (y>1):
-            self.writeCmd(0x80 | (0x40*(y-2) + x + 0x14))
+        if self.four_line:
+            self.writeCmd(0x80 | (0x20*y + x))
         else:
             self.writeCmd(0x80 | (0x40*y + x))
             
@@ -165,6 +166,16 @@ class VFDController(object):
             cmd = cmd | 1
 
         self.writeCmd(cmd)
+
+        self.last_display = display
+        self.last_cursor = cursor
+        self.last_blink = blink
+
+    def setDisplayCached(self, display, cursor, blink):
+        if (self.last_display != display) or \
+                (self.last_cursor != cursor) or \
+                (self.last_blink != blink):
+            self.setDisplay(display, cursor, blink)
 
     # -----------------------------------------------------------------------------------------------------------------
     # encoder stuff
@@ -417,7 +428,7 @@ def main():
     from datetime import datetime
 
     bus = smbus.SMBus(1)
-    display = VFDController(MCP23017(bus, 0x20))
+    display = VFDController(MCP23017(bus, 0x20), four_line=False)
 
     #GPIO.setmode(GPIO.BCM)
     #display.enable_interrupts(26)
