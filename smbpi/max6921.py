@@ -1,5 +1,26 @@
+"""
+    MAX6921 Driver, for use with IV-28B Russian VFD Tube
+    Scott M Baker, 2020
+    http://www.smbaker.com/
+
+    Raspberry pi driver for MAX6921 VFD Controller.
+
+    Requires pigpio in order to smoothly multiplex the display.
+
+    Pigpio Installation notes:
+        rm -f pigpio.zip
+        sudo rm -rf pigpio-master
+        wget https://github.com/joan2937/pigpio/archive/master.zip -O pigpio.zip
+        unzip pigpio.zip
+        cd pigpio-master
+        make
+        sudo make install
+
+    Pigpio run notes:
+        sudo pigpiod -s 2
+"""
+
 import time
-import RPi.GPIO as GPIO
 import pigpio
 
 PIN_VFD_LOAD = 17
@@ -71,73 +92,11 @@ GATES = [BIT_G1, BIT_G2, BIT_G3, BIT_G4, BIT_G5, BIT_G6, BIT_G7, BIT_G8, BIT_G9]
 DIGITSI = [ZEROI, ONEI, TWOI, THREEI, FOURI, FIVEI, SIXI, SEVENI, EIGHTI, NINEI]
 GATESI = [BITI_G1, BITI_G2, BITI_G3, BITI_G4, BITI_G5, BITI_G6, BITI_G7, BITI_G8, BITI_G9]
 
-
-class Max6921:
-    def __init__(self, 
-                 load=PIN_VFD_LOAD,
-                 clk=PIN_VFD_CLK,
-                 data=PIN_VFD_DATA,
-                 blank=PIN_VFD_BLANK):
-        self.load = load
-        self.clk = clk
-        self.data = data
-        self.blank = blank
-
-        self.flipped_ud = False
-        self.flipped_lr = True
-
-        GPIO.setmode(GPIO.BCM)
-
-        GPIO.setup(self.load, GPIO.OUT)
-        GPIO.setup(self.blank, GPIO.OUT)
-        GPIO.setup(self.data, GPIO.OUT)
-        GPIO.setup(self.clk, GPIO.OUT)
-
-        GPIO.output(self.load, GPIO.LOW)  # not loaded
-        GPIO.output(self.blank, GPIO.LOW)  # not blanked (outputs follow out)
-        GPIO.output(self.clk, GPIO.HIGH)  # clocks in on high->low transitions
-        GPIO.output(self.data, GPIO.LOW)  # might as well default it to something
-
-    def clkDelay(self):
-        pass # time.sleep(0.0001)
-
-    def shiftIn(self, data):
-        for i in range(0, 20):
-            if (data & 0x80000) != 0:
-                GPIO.output(self.data, 1)
-            else:
-                GPIO.output(self.data, 0)
-            GPIO.output(self.clk, 0)
-            self.clkDelay()
-            GPIO.output(self.clk, 1)
-            self.clkDelay()
-            data = data << 1
-
-        GPIO.output(self.load, 1)
-        self.clkDelay()
-        GPIO.output(self.load, 0)
-
-    def displayDigit(self, digit, value):
-        if self.flipped_ud:
-            segs = DIGITSI[value]
-        else:
-            segs = DIGITS[value]
-        if self.flipped_lr:
-            gate = GATESI[digit+1]
-        else:
-            gate = GATES[digit+1]
-        self.shiftIn(segs | gate)
-
-    def displayNumber(self, value):
-        for i in range(0,8):
-            self.displayDigit(i, value % 10)
-            value = value/10
-        self.shiftIn(0)
-
 def TO_BIT(x):
     return 1<<x
 
-class Max6921_Wave:
+
+class Max6921:
     def __init__(self,
                  pi=None,
                  load=PIN_VFD_LOAD,
@@ -163,7 +122,7 @@ class Max6921_Wave:
         self.pi.write(self.clk, 1)  # clocks in on high->low transitions
         self.pi.write(self.data, 0)  # might as well default it to something
 
-    def shiftIn(self, data):
+    def shiftIn(self, data, postDelay=10):
         pulses = []
         for i in range(0, 20):
             if (data & 0x80000) != 0:
@@ -175,7 +134,7 @@ class Max6921_Wave:
             data = data << 1
 
         pulses.append(pigpio.pulse(TO_BIT(self.load), 0, 1))
-        pulses.append(pigpio.pulse(0, TO_BIT(self.load), 10))
+        pulses.append(pigpio.pulse(0, TO_BIT(self.load), postDelay))
 
         return pulses
 
@@ -190,12 +149,28 @@ class Max6921_Wave:
             gate = GATES[digit+1]
         return self.shiftIn(segs | gate)
 
-    def generateNumber(self, value):
+    def generateNumber(self, value, leadingZero=False):
         pulses = []
-        for i in range(0,8):
+        for i in range(0, 8):
             pulses = pulses + self.generateDigit(i, value % 10)
             value = value/10
-        self.shiftIn(0)
+            # blank the outputs to prevent ghosting between digits
+            pulses = pulses + self.shiftIn(0, postDelay=0)
+
+            if (not leadingZero) and (value == 0):
+                return pulses
+        return pulses
+
+    def generateString(self, s):
+        # gnerateString supports using spaces to leave digits blank
+        pulses = []
+        i = 7
+        for c in s:
+            if c.isdigit():
+                pulses = pulses + self.generateDigit(i, ord(c)-ord("1")+1)
+                # blank the outputs to prevent ghosting between digits
+                pulses = pulses + self.shiftIn(0, postDelay=0)
+            i = i - 1
         return pulses
 
     def displayWave(self, pulses):
@@ -204,17 +179,31 @@ class Max6921_Wave:
         self.wave_display = self.pi.wave_create()
         self.pi.wave_send_repeat(self.wave_display)
 
+    def displayNumber(self, n, leadingZero=False):
+        self.displayWave(self.generateNumber(n, leadingZero=leadingZero))
+
+    def displayString(self, s):
+        self.displayWave(self.generateString(s))
+
 
 
 def main():
+    # Self-test demo, starts by displaying 12345678
+    # then increments ten times per second.
+
     pi = pigpio.pi()
 
-    vfd = Max6921_Wave(pi = pi)
-    pulses = vfd.generateNumber(12345678)
-    vfd.displayWave(pulses)
+    vfd = Max6921(pi = pi)
+
+    n = 12345678
 
     while True:
-        time.sleep(1)
+        #vfd.displayNumber(n)
+        vfd.displayString("%d" % n)
+
+        time.sleep(0.1)
+
+        n = n + 1
 
 
 if __name__ == "__main__":
