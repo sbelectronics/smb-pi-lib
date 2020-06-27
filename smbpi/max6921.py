@@ -4,6 +4,12 @@
     http://www.smbaker.com/
 
     Raspberry pi driver for MAX6921 VFD Controller.
+    
+    This implementation is specific to use with an IV-28 display.
+    The BIT_ constants will explain which of the MAXX6921 outputs
+    are connected to which anodes and grids on the IV-28. If you're
+    using a different display or you've wired yours differently,
+    then adjusting the BIT_ constants will be necessary.
 
     Requires pigpio in order to smoothly multiplex the display.
 
@@ -109,8 +115,14 @@ class Max6921:
         self.data = data
         self.blank = blank
 
+        self.leaderTop = False
+        self.leaderMid = False
+        self.leaderBot = False
+
         self.flipped_ud = False
         self.flipped_lr = True
+
+        self.dps = [False, False, False, False, False, False, False, False, False]
 
         self.pi.set_mode(self.load, pigpio.OUTPUT)
         self.pi.set_mode(self.blank, pigpio.OUTPUT)
@@ -138,21 +150,53 @@ class Max6921:
 
         return pulses
 
-    def generateDigit(self, digit, value):
+    def setDP(self, number, value, exclusive = False):
+        if exclusive:
+            self.dps = [False, False, False, False, False, False, False, False, False]
+        self.dps[number] = value
+
+    def setLeader(self, top=False, mid=False, bot=False):
+        # The "leader" is the special symbols before the leftmost digit of the
+        # display. "top" and "bot" are both dots. "mid" is a dash and might be
+        # useful as a minus sign
+        self.leaderTop = top
+        self.leaderMid = mid
+        self.leaderBot = bot
+
+    def generateDigit(self, digit, value, dp=False):
         if self.flipped_ud:
             segs = DIGITSI[value]
         else:
             segs = DIGITS[value]
+
         if self.flipped_lr:
             gate = GATESI[digit+1]
         else:
             gate = GATES[digit+1]
+
+        if dp:
+            segs = segs | BIT_DP
+
         return self.shiftIn(segs | gate)
+
+    def generateLeader(self):
+        segs = 0
+        if self.leaderTop:
+            segs = segs + BIT_F
+        if self.leaderMid:
+            segs = segs + BIT_G
+        if self.leaderBot:
+            segs = segs + BIT_DP
+
+        if segs != 0:
+            return self.shiftIn(segs | GATES[0]) + self.shiftIn(0, postDelay=0)
+        else:
+            return []
 
     def generateNumber(self, value, leadingZero=False):
         pulses = []
         for i in range(0, 8):
-            pulses = pulses + self.generateDigit(i, value % 10)
+            pulses = pulses + self.generateDigit(i, value % 10, self.dps[i])
             value = value/10
             # blank the outputs to prevent ghosting between digits
             pulses = pulses + self.shiftIn(0, postDelay=0)
@@ -167,10 +211,12 @@ class Max6921:
         i = 7
         for c in s:
             if c.isdigit():
-                pulses = pulses + self.generateDigit(i, ord(c)-ord("1")+1)
+                pulses = pulses + self.generateDigit(i, ord(c)-ord("1")+1, self.dps[i])
                 # blank the outputs to prevent ghosting between digits
                 pulses = pulses + self.shiftIn(0, postDelay=0)
             i = i - 1
+        pulses = pulses + self.generateLeader()
+        self.shiftIn(DIGITS[8] + GATES[0] + BIT_DP)
         return pulses
 
     def displayWave(self, pulses):
@@ -199,6 +245,8 @@ def main():
 
     while True:
         #vfd.displayNumber(n)
+        vfd.setLeader(mid=((n%10)<=5))
+        vfd.setDP(n % 9, 1, True)
         vfd.displayString("%d" % n)
 
         time.sleep(0.1)
