@@ -224,14 +224,73 @@ class Max6921:
         self.shiftIn(DIGITS[8] + GATES[0] + BIT_DP)
         return pulses
 
-    def displayWave(self, pulses):
+    def displayWaveOrig(self, pulses):
+        # This was my original wave display function that stopped all waves
+        # and lceared all resources, then created and displayed the new
+        # wave. It worked, but was a little flickery.
         if self.pilock:
             self.pilock.acquire()
         try:
             self.pi.wave_clear()
+
             self.pi.wave_add_generic(pulses)
             self.waveDisplay = self.pi.wave_create()
             self.pi.wave_send_repeat(self.waveDisplay)
+        finally:
+            if self.pilock:
+                self.pilock.release()
+
+    def displayWaveNewThenDeleteOld(self, pulses):
+        # This was my first attempt at reducing the flicker. Here I start
+        # displaying the new wave before I delete the old. Flicker is
+        # reduced but there are occasional inconsistencies/pauses.
+        if self.pilock:
+            self.pilock.acquire()
+        try:
+            self.pi.wave_add_generic(pulses)
+            newWaveDisplay = self.pi.wave_create()
+
+            # display the new one
+            self.pi.wave_send_repeat(newWaveDisplay)
+
+            # stop the old one
+            # it might fail if someone else called clear_wave
+            if (self.waveDisplay is not None) and \
+               (self.waveDisplay != newWaveDisplay):
+                try:
+                    self.pi.wave_delete(self.waveDisplay)
+                except:
+                    # it might fail if someone else called clear_wave
+                    pass
+
+            self.waveDisplay = newWaveDisplay
+        finally:
+            if self.pilock:
+                self.pilock.release()
+
+    def displayWave(self, pulses):
+        # This is my current attempt at reducing the flicker. I create the
+        # new wave, then stop and delete the old one, then start the new
+        # one.
+        if self.pilock:
+            self.pilock.acquire()
+        try:
+            self.pi.wave_add_generic(pulses)
+            newWaveDisplay = self.pi.wave_create()
+
+            # stop the old one
+            # it might fail if someone else called clear_wave
+            if (self.waveDisplay is not None) and \
+               (self.waveDisplay != newWaveDisplay):
+                try:
+                    self.pi.wave_delete(self.waveDisplay)
+                except:
+                    pass
+
+            # display the new one
+            self.pi.wave_send_repeat(newWaveDisplay)
+
+            self.waveDisplay = newWaveDisplay
         finally:
             if self.pilock:
                 self.pilock.release()
