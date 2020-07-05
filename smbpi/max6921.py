@@ -160,6 +160,11 @@ class Max6921:
             self.dps = [False, False, False, False, False, False, False, False, False]
         self.dps[number] = value
 
+    def setDPList(self, l):
+        self.setDP(0, False, True)
+        for item in l:
+            self.setDP(item, True, False)
+
     def setLeader(self, top=False, mid=False, bot=False):
         # The "leader" is the special symbols before the leftmost digit of the
         # display. "top" and "bot" are both dots. "mid" is a dash and might be
@@ -275,8 +280,11 @@ class Max6921:
         if self.pilock:
             self.pilock.acquire()
         try:
-            self.pi.wave_add_generic(pulses)
-            newWaveDisplay = self.pi.wave_create()
+            if pulses:
+                self.pi.wave_add_generic(pulses)
+                newWaveDisplay = self.pi.wave_create()
+            else:
+                newWaveDisplay = -1
 
             # stop the old one
             # it might fail if someone else called clear_wave
@@ -287,8 +295,12 @@ class Max6921:
                 except:
                     pass
 
-            # display the new one
-            self.pi.wave_send_repeat(newWaveDisplay)
+            if pulses:
+                # display the new one
+                self.pi.wave_send_repeat(newWaveDisplay)
+            else:
+                # no data; turn off the transmitter
+                self.pi.wave_tx_stop()
 
             self.waveDisplay = newWaveDisplay
         finally:
