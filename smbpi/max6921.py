@@ -226,7 +226,7 @@ class Max6921:
                 pulses = pulses + self.shiftIn(0, postDelay=0)
             i = i - 1
         pulses = pulses + self.generateLeader()
-        self.shiftIn(DIGITS[8] + GATES[0] + BIT_DP)
+        self.shiftIn(DIGITS[8] + GATES[0] + BIT_DP)   # XXX is this leftover, can be deleted?
         return pulses
 
     def displayWaveOrig(self, pulses):
@@ -280,11 +280,12 @@ class Max6921:
         if self.pilock:
             self.pilock.acquire()
         try:
-            if pulses:
-                self.pi.wave_add_generic(pulses)
-                newWaveDisplay = self.pi.wave_create()
-            else:
-                newWaveDisplay = -1
+            if not pulses:
+                # no pulses, so generate a blank display
+                pulses = self.shiftIn(0)
+
+            self.pi.wave_add_generic(pulses)
+            newWaveDisplay = self.pi.wave_create()
 
             # stop the old one
             # it might fail if someone else called clear_wave
@@ -295,12 +296,8 @@ class Max6921:
                 except:
                     pass
 
-            if pulses:
-                # display the new one
-                self.pi.wave_send_repeat(newWaveDisplay)
-            else:
-                # no data; turn off the transmitter
-                self.pi.wave_tx_stop()
+            # display the new one
+            self.pi.wave_send_repeat(newWaveDisplay)
 
             self.waveDisplay = newWaveDisplay
         finally:
