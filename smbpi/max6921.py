@@ -109,12 +109,14 @@ class Max6921:
                  load=PIN_VFD_LOAD,
                  clk=PIN_VFD_CLK,
                  data=PIN_VFD_DATA,
-                 blank=PIN_VFD_BLANK):
+                 blank=PIN_VFD_BLANK,
+                 pilock=None):
         self.pi = pi
         self.load = load
         self.clk = clk
         self.data = data
         self.blank = blank
+        self.pilock = pilock
 
         self.leaderTop = False
         self.leaderMid = False
@@ -124,6 +126,8 @@ class Max6921:
         self.flipped_lr = True
 
         self.dps = [False, False, False, False, False, False, False, False, False]
+
+        self.waveDisplay = None
 
         self.pi.set_mode(self.load, pigpio.OUTPUT)
         self.pi.set_mode(self.blank, pigpio.OUTPUT)
@@ -221,10 +225,16 @@ class Max6921:
         return pulses
 
     def displayWave(self, pulses):
-        self.pi.wave_clear()
-        self.pi.wave_add_generic(pulses)
-        self.wave_display = self.pi.wave_create()
-        self.pi.wave_send_repeat(self.wave_display)
+        if self.pilock:
+            self.pilock.acquire()
+        try:
+            self.pi.wave_clear()
+            self.pi.wave_add_generic(pulses)
+            self.waveDisplay = self.pi.wave_create()
+            self.pi.wave_send_repeat(self.waveDisplay)
+        finally:
+            if self.pilock:
+                self.pilock.release()
 
     def displayNumber(self, n, leadingZero=False):
         self.displayWave(self.generateNumber(n, leadingZero=leadingZero))
@@ -239,6 +249,9 @@ def main():
     # then increments ten times per second.
 
     pi = pigpio.pi()
+
+    pi.wave_clear()
+    pi.wave_tx_stop()
 
     vfd = Max6921(pi = pi)
 
