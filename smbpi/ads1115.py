@@ -56,7 +56,7 @@ COMP_QUE_TWO = 1
 COMP_QUE_THREE = 2
 COMP_QUE_DISABLE = 3
 
-# default = MUX_AIN0_AIN1 | PGA_2V | MODE_SINGLE | DATA_1600 | COMP_MODE_TRAD | COMP_POL_LOW | COMP_NON_LAT | COMP_QUE_DISBALE
+# default = MUX_AIN0_AIN1 | PGA_2V | MODE_SINGLE | DATA_128 | COMP_MODE_TRAD | COMP_POL_LOW | COMP_NON_LAT | COMP_QUE_DISBALE
 
 
 class ADS1115:
@@ -113,7 +113,7 @@ def main():
     import time
     bus = smbus.SMBus(1)
     adc = ADS1115(bus, 0x48)
-    adc.write_config(MUX_AIN0 | PGA_4V | MODE_CONT | DATA_1600 | COMP_MODE_TRAD | COMP_POL_LOW | COMP_NON_LAT | COMP_QUE_DISABLE)
+    adc.write_config(MUX_AIN0 | PGA_4V | MODE_CONT | DATA_128 | COMP_MODE_TRAD | COMP_POL_LOW | COMP_NON_LAT | COMP_QUE_DISABLE)
     adc.wait_samp()
     while True:
         print "%d        \r" % adc.read_conversion()
