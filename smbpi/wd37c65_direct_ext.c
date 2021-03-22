@@ -11,6 +11,7 @@
 #define RESULT_OVER_CMDRES 0x17
 #define RESULT_TIMEOUT_READRES 0x18
 #define RESULT_READ_ERROR 0x19
+#define RESULT_WRITE_ERROR 0x20
 
 #define REG_MSR 0
 #define REG_DATA 1
@@ -152,7 +153,7 @@ unsigned int wd_read_msr(void)
 
 unsigned int wd_write_data(unsigned int data)
 {
-  //fprintf(stdout, "write data %02X\n", data);
+  //fprintf(stderr, "write data %02X\n", data);
   wd_config_output();
   wd_set_addr(REG_DATA);
   wd_set_data(data);
@@ -167,7 +168,7 @@ unsigned int wd_write_data(unsigned int data)
 
 unsigned int wd_write_dor(unsigned int data)
 {
-  //fprintf(stdout, "write dor %02X\n", data);
+  //fprintf(stderr, "write dor %02X\n", data);
   wd_config_output();
   wd_set_addr(0);
   wd_set_data(data);
@@ -182,7 +183,7 @@ unsigned int wd_write_dor(unsigned int data)
 
 unsigned int wd_write_dcr(unsigned int data)
 {
-  //fprintf(stdout, "write dcr %02X\n", data);
+  //fprintf(stderr, "write dcr %02X\n", data);
   wd_config_output();
   wd_set_addr(0);
   wd_set_data(data);
@@ -198,12 +199,12 @@ unsigned int wd_write_dcr(unsigned int data)
 unsigned int wd_wait_msr(unsigned int mask, unsigned int val)
 {
   unsigned int msr;
-  unsigned int timeout = 65535;
+  unsigned int timeout = 65535 * 3;
 
   wd_config_input();
   while (TRUE) {
       // wiringPi
-      delayMicroseconds(10);
+      delayMicroseconds(3);
 
       msr = wd_read_msr();
       if ((msr & mask) == val) {
@@ -212,7 +213,7 @@ unsigned int wd_wait_msr(unsigned int mask, unsigned int val)
 
       timeout--;
       if (timeout == 0) {
-        fprintf(stdout, "waitmsr timedout with %02X\n", msr);
+        fprintf(stderr, "waitmsr timedout with %02X\n", msr);
         return RESULT_TIMEOUT_EXEC;
       }
   }
@@ -246,8 +247,6 @@ unsigned int wd_drain(void)
 void wd_init(void)
 {
   unsigned int i;
-
-  fprintf(stdout, "init\n");
 
   myDigitalWrite(WD_A0, 1);
   myDigitalWrite(WD_CS, 1);
@@ -283,8 +282,6 @@ void wd_reset(unsigned int dor)
 {
     int i;
 
-    fprintf(stdout, "reset\n");
-  
     wd_write_dor(0);
     delayMicroseconds(17);
     wd_write_dor(dor);
@@ -514,11 +511,16 @@ static PyObject *wd_direct_write_block(PyObject *self, PyObject *args)
   }
 
   for (i=0; i<count; i++) {
-      unsigned int status = wd_wait_msr(0xFF, 0xD0);  // suspicious
+      unsigned int status = wd_wait_msr(0xFF, 0xB0);  // suspicious
       if (status!=0) {
         unsigned int msr = wd_read_msr();
-        fprintf(stderr, "write_block aborting on index %d with msr %02X\n", i, msr);
-        return Py_BuildValue("i", status);
+        if (msr == 0xD0) {
+            fprintf(stderr, "write_block aborting on index %d with write error\n", i);
+            return Py_BuildValue("i", RESULT_WRITE_ERROR);
+        } else {
+            fprintf(stderr, "write_block aborting on index %d with msr %02X\n", i, msr);
+            return Py_BuildValue("i", status);
+        }
       }
 
       wd_write_data(*buf);
@@ -600,7 +602,6 @@ static PyMethodDef wd_direct_methods[] = {
 
 PyMODINIT_FUNC initwd37c65_direct_ext(void)
 {
-  fprintf(stdout, "initwd37\n");
   wiringPiSetupGpio();
 
   (void) Py_InitModule("wd37c65_direct_ext", wd_direct_methods);

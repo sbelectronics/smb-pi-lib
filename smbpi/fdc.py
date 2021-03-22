@@ -36,6 +36,7 @@ FRC_OVER_DRAIN = 0x16
 FRC_OVER_CMDRES = 0x17
 FRC_TO_READRES = 0x18
 FRC_READ_ERROR = 0x19
+FRC_WRITE_ERROR = 0x20
 
 CFD_READ	 =	0B00000110	# CMD,HDS/DS,C,H,R,N,EOT,GPL,DTL --> ST0,ST1,ST2,C,H,R,N
 CFD_READDEL	 =	0B00001100	# CMD,HDS/DS,C,H,R,N,EOT,GPL,DTL --> ST0,ST1,ST2,C,H,R,N
@@ -54,6 +55,23 @@ CFD_DRVSTAT	 =  0B00000100	# CMD,HDS/DS --> ST3
 CFD_SEEK	 =  0B00001111	# CMD,HDS/DS --> <EMPTY>
 CFD_VERSION	 =  0B00010000	# CMD --> ST0
 
+CFD_NAME = {CFD_READ: "READ",
+            CFD_READDEL: "READDEL",
+            CFD_WRITE: "WRITE",
+            CFD_WRITEDEL: "WRITEDEL",
+            CFD_READTRK: "READTRK",
+            CFD_READID: "READID",
+            CFD_FMTTRK: "FMTTRK",
+            CFD_SCANEQ: "SCANEQ",
+            CFD_SCANLOEQ: "SCANLOEQ",
+            CFD_SCANHIEQ: "SCANHIEQ",
+            CFD_RECAL: "RECAL",
+            CFD_SENSEINT: "SENSEINT",
+            CFD_SPECIFY: "SPECIFY",
+            CFD_DRVSTAT: "DRVSTAT",
+            CFD_SEEK: "SEEK",
+            CFD_VERSION: "VERSION"}
+
 class FDCException(Exception):
     def __init__(self, fstRC, msg=None):
         if not msg:
@@ -62,7 +80,9 @@ class FDCException(Exception):
         self.fstRC = fstRC
 
 class FDC:
-    def __init__(self):
+    def __init__(self, verbose=True):
+        self.verbose = verbose
+
         self.DOR_INIT = 0B00001100
         self.DOR_BR250 = self.DOR_INIT
         self.DOR_BR500 = self.DOR_INIT
@@ -117,15 +137,20 @@ class FDC:
         self.DCR = self.DCR_BR500
         self.media = FDM144
 
-    def log(self,x):
-        print(x)
+    def log(self, x, newline=True):
+        if not self.verbose:
+            return
+        if newline:
+            print(x, file=sys.stderr)
+        else:
+            print(x, end='', file=sys.stderr)
 
     # ------------ chip funcs -----------------
 
     def readDataBlock(self, count):
-        self.log(">>> readdatablock")
+        #self.log(">>> readdatablock")
         status, blk = wd37c65_direct_ext.read_block(count)
-        self.log(">>> readdatablock status %02X, len %d" % (status, len(blk)))
+        #self.log(">>> readdatablock status %02X, len %d" % (status, len(blk)))
         if status not in [FRC_OK, FRC_READ_ERROR]:
             raise FDCException(status)
 
@@ -133,7 +158,7 @@ class FDC:
 
     def writeDataBlock(self, count):
         status = wd37c65_direct_ext.write_block(self.dskBuf, count)
-        if status != 0:
+        if status not in [FRC_OK, FRC_WRITE_ERROR]:
             raise FDCException(status)
 
     def writeData(self, d):
@@ -145,20 +170,15 @@ class FDC:
             raise FDCException(status)
 
     def wait_msr(self, mask, val):
-        status = wd37c65_direct_ext.wait_msr(mask, val)
-        if status != 0:
-            raise FDCException(status)
+        return wd37c65_direct_ext.wait_msr(mask, val)
 
     def readResult(self):
-        self.log("readResult enter")
         status, blk = wd37c65_direct_ext.read_result()
         if status != 0:
             raise FDCException(status)
 
         self.frb = blk
         self.frbLen = len(self.frb)
-
-        self.log("readResult done")
 
     def resetFDC(self):
         wd37c65_direct_ext.reset(self.dor)
@@ -190,6 +210,9 @@ class FDC:
         #raise Exception()
         self._clearDiskChange()
         self.fdcReady = True
+
+    def done(self):
+        self._motorOff()
 
     def _reset():
         self.resetFDC()
@@ -315,6 +338,9 @@ class FDC:
             # motor delay
             time.sleep(1)
 
+    def _motorOff(self):
+        self.dor = self.DOR_INIT
+        self.writeDOR(self.dor)
 
     def _clearDiskChange(self):
         for i in range(0, 5):
@@ -351,22 +377,24 @@ class FDC:
         self.fcpBuf[8] = self.gapLengthFormat
         self.fcpLen = 9
 
+    def _cfdName(self, x):
+        x = x & 0B1111
+        return CFD_NAME.get(x, "UNKNOWN")
+
     def _fop(self):
         try:
             fcpBytes = []
             for i in range(0, self.fcpLen):
                 fcpBytes.append("%02X" % self.fcpBuf[i])
 
-            self.log("FOP %s ->" % (" ".join(fcpBytes)))
+            self.log("FOP <%s> %s ->" % (self._cfdName(self.fcpBuf[0]), (" ".join(fcpBytes))), newline=False)
 
             result = self._fop_internal()
 
             frbBytes = []
             for i in range(0, self.frbLen):
                 frbBytes.append("%02X" % ord(self.frb[i]))
-            self.log("      -> %s" % (" ".join(frbBytes)))
-
-            print("_fop result: %02X" % result)
+            self.log("-> [result %02X] %s" % (result, (" ".join(frbBytes))))
             return result
         except FDCException, e:
             print("Exception in _Fop %s, code %2X" % (e, e.fstRC), file=sys.stderr)
@@ -379,19 +407,18 @@ class FDC:
 
         self.drain()
 
-        self.log("FOP sending command")
-
         for i in range(0, self.fcpLen):
             # DIO=0 and RQM=1 indicate byte is ready to write
-            self.wait_msr(0xC0, 0x80)
+            self.fstRC = self.wait_msr(0xC0, 0x80)
+            if (self.fstRC!=0):
+                self.log("Sendcommand error in wait_msr %02X" % self.fstRC)
+                return self.fstRC
             self.writeData(self.fcpBuf[i])
 
         #fcpStr = ""
         #for i in range(0, self.fcpLen):
         #    fcpStr = fcpStr + chr(self.fcpBuf[i])
         #wd37c65_direct_ext.write_command(fcpStr, self.fcpLen)
-
-        self.log("FOP sent command")
 
         if (self.fcpCmd == CFD_READ):
             self.readDataBlock(self.secSize)
@@ -444,8 +471,6 @@ class FDC:
             # DSKCHG
             self.fstRC = FRC_DSKCHG
             return self.fstRC
-
-        print("YYY %d" % self.fstRC)
 
         # no error bits are set
 
