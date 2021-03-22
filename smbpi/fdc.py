@@ -1,3 +1,8 @@
+# Raspberry Pi WD37C65 driver
+# Scott Baker, https://www.smbaker.com/
+#
+# Borrowed liberally from the RomWBW floppy driver
+
 from __future__ import print_function
 import sys
 import time
