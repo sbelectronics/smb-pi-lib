@@ -14,8 +14,11 @@ import time
 
 import wd37c65_direct_ext
 
+FDM720 = 0
 FDM144 = 1
 FDM360 = 2
+FDM120 = 3
+FDM111 = 4
 
 FRC_OK = 0
 FRC_NOTIMPL = 1
@@ -85,7 +88,7 @@ class FDCException(Exception):
         self.fstRC = fstRC
 
 class FDC:
-    def __init__(self, verbose=True):
+    def __init__(self, media = "144", verbose=True):
         self.verbose = verbose
 
         self.DOR_INIT = 0B00001100
@@ -110,7 +113,21 @@ class FDC:
 
         self.dor = 0
 
-        self.set144()
+        self.setMedia(media)
+
+    def setMedia(self, what):
+        if (what == "144") or (what == "pc144") or (what == "14.4") or (what == "1440") or (what == "pc1440"):
+            self.set144()
+        elif (what == "720") or (what == "pc720"):
+            self.set720()
+        elif (what == "360") or (what == "pc360"):
+            self.set360()
+        elif (what == "120") or (what == "pc120"):
+            self.set120()
+        elif (what == "111") or (what == "pc111"):
+            self.set111()
+        else:
+            raise Exception("Unknown media %s"% what)
 
     def set360(self):
         self.numCyl = 0x28
@@ -127,6 +144,21 @@ class FDC:
         self.DCR = self.DCR_BR250
         self.media = FDM360
 
+    def set720(self):
+        self.numCyl = 0x50
+        self.numHead = 2
+        self.numSec = 0x09
+        self.sot = 1
+        self.secCount = 0x09
+        self.secSize = 0x200
+        self.gapLengthRW = 0x2A
+        self.gapLengthFormat = 0x50
+        self.stepRate = (13 << 4) | 0  # srtHut
+        self.headLoadTimeNonDma = (4 << 1) | 1  # hltNd
+        self.DOR = self.DOR_BR250
+        self.DCR = self.DCR_BR250
+        self.media = FDM720
+
     def set144(self):
         self.numCyl = 0x50
         self.numHead = 2
@@ -142,6 +174,36 @@ class FDC:
         self.DCR = self.DCR_BR500
         self.media = FDM144
 
+    def set120(self):
+        self.numCyl = 0x50
+        self.numHead = 2
+        self.numSec = 0x0F
+        self.sot = 1
+        self.secCount = 0x0F
+        self.secSize = 0x200
+        self.gapLengthRW = 0x1B
+        self.gapLengthFormat = 0x54
+        self.stepRate = (10 << 4) | 0  # srtHut
+        self.headLoadTimeNonDma = (8 << 1) | 1  # hltNd
+        self.DOR = self.DOR_BR500
+        self.DCR = self.DCR_BR500
+        self.media = FDM120
+
+    def set111(self):
+        self.numCyl = 0x28
+        self.numHead = 2
+        self.numSec = 0x0F
+        self.sot = 1
+        self.secCount = 0x0F
+        self.secSize = 0x200
+        self.gapLengthRW = 0x1B
+        self.gapLengthFormat = 0x54
+        self.stepRate = (13 << 4) | 0  # srtHut
+        self.headLoadTimeNonDma = (25 << 1) | 1  # hltNd
+        self.DOR = self.DOR_BR500
+        self.DCR = self.DCR_BR500
+        self.media = FDM111 
+
     def log(self, x, newline=True):
         if not self.verbose:
             return
@@ -153,9 +215,7 @@ class FDC:
     # ------------ chip funcs -----------------
 
     def readDataBlock(self, count):
-        #self.log(">>> readdatablock")
         status, blk = wd37c65_direct_ext.read_block(count)
-        #self.log(">>> readdatablock status %02X, len %d" % (status, len(blk)))
         if status not in [FRC_OK, FRC_READ_ERROR]:
             raise FDCException(status)
 
@@ -207,19 +267,13 @@ class FDC:
         self.dor = self.DOR_INIT
         self.initFDC()
         self.resetFDC()
-        #self.writeDOR(0x1C)
-
-        #self._setupIO(CFD_READ | 0B11100000)
-        #return self._fop()
-
-        #raise Exception()
         self._clearDiskChange()
         self.fdcReady = True
 
     def done(self):
         self._motorOff()
 
-    def _reset():
+    def _reset(self):
         self.resetFDC()
         self._clearDiskChange()
         self.track = 0xFF  # mark needing recal
@@ -302,8 +356,7 @@ class FDC:
             self._waitSeek()
             if self.fstRC != FRC_OK:
                 return self.fstRC
-            self.track = self.cyl            
-
+            self.track = self.cyl
 
         self.fstRC = FRC_OK
         return self.fstRC
