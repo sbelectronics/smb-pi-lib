@@ -13,6 +13,29 @@
 /* Borrowed from https://www.raspberrypi.org/forums/viewtopic.php?t=228727
  *
  * tjrob's techniques for real time scheduling a process on a pi.
+ * 
+ * works by isolating a cpu from Linux, then pinning the process to that cpu
+ */
+
+/* A different comment from another thread (https://www.raspberrypi.org/forums/viewtopic.php?t=200793), about using taskset:
+ * Heater ... I have done everything you said, and it works just perfectly now:
+ * - add this at kernel boot prompt, to reserve cores 2 and 3 (first core is #0): isolcpus=2,3
+ * - start my bash script on core 2: /usr/bin/taskset -c 2 /root/ws2812-spi/ws2812.sh
+ *- in this script, call the python API (the one that really performs the SPI calls) on core 3: taskset -c 3 nice -n -20 /root/ws2812-spi/ws2812.05.py
+ *   since I am now using taskset, nice is probably useless. And then, reboot.
+ */
+
+/* Another option may be partrt, uses cgroups
+ */
+
+/* some tests
+ *
+ *    fdc with no special options, 4.4% failure
+ *    fdc with --realtime, 3% failure
+ *       a lot of these are 90 followed by D0 errors, and I wonder if something else is going on
+ *    fdc with --realtime and sleep before the op, 3% failure
+ *    fdc with --realtime --pincpu 3 and isolcpus=3 on cmdline, 3% failure
+ * 
  */
 
 
