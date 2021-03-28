@@ -45,6 +45,9 @@ FRC_OVER_CMDRES = 0x17
 FRC_TO_READRES = 0x18
 FRC_READ_ERROR = 0x19
 FRC_WRITE_ERROR = 0x20
+FRC_SHORT = 0x21
+FRC_LONG = 0x22
+FRC_INPROGRESS = 0x23
 
 CFD_READ	 =	0B00000110	# CMD,HDS/DS,C,H,R,N,EOT,GPL,DTL --> ST0,ST1,ST2,C,H,R,N
 CFD_READDEL	 =	0B00001100	# CMD,HDS/DS,C,H,R,N,EOT,GPL,DTL --> ST0,ST1,ST2,C,H,R,N
@@ -132,11 +135,13 @@ class FDC:
     def set360(self):
         self.numCyl = 0x28
         self.numHead = 2
-        self.numSec = 9
+        #self.numSec = 9  # redundant with self.secCount ??
         self.sot = 1
         self.secCount = 9
+        self.eot = self.secCount
         self.secSize = 0x200
-        self.gapLengthRW = 2
+        self.N = 2  # 2 = 512 bytes/sector
+        self.gapLengthRW = 0x2A
         self.gapLengthFormat = 0x50
         self.stepRate = (13 << 4) | 0  # srtHut
         self.headLoadTimeNonDma = (4 << 1) | 1  # hltNd
@@ -144,13 +149,33 @@ class FDC:
         self.DCR = self.DCR_BR250
         self.media = FDM360
 
+    def set9836(self):
+        # HP 9836
+        self.numCyl = 0x23
+        self.numHead = 2
+        #self.numSec = 0x0F  # redundant with self.secCount ??
+        self.sot = 1
+        self.secCount = 0x0F
+        self.eot = self.secCount
+        self.secSize = 0x100
+        self.N = 1  # 1 = 256 bytes/sector
+        self.gapLengthRW = 0x2A
+        self.gapLengthFormat = 0x50
+        self.stepRate = (13 << 4) | 0  # srtHut
+        self.headLoadTimeNonDma = (4 << 1) | 1  # hltNd
+        self.DOR = self.DOR_BR250
+        self.DCR = self.DCR_BR250
+        self.media = FDM360        
+
     def set720(self):
         self.numCyl = 0x50
         self.numHead = 2
-        self.numSec = 0x09
+        #self.numSec = 0x09
         self.sot = 1
         self.secCount = 0x09
+        self.eot = self.secCount
         self.secSize = 0x200
+        self.N = 2  # 2 = 512 bytes/sector
         self.gapLengthRW = 0x2A
         self.gapLengthFormat = 0x50
         self.stepRate = (13 << 4) | 0  # srtHut
@@ -162,10 +187,12 @@ class FDC:
     def set144(self):
         self.numCyl = 0x50
         self.numHead = 2
-        self.numSec = 0x12
+        #self.numSec = 0x12
         self.sot = 1
         self.secCount = 0x12
+        self.eot = self.secCount
         self.secSize = 0x200
+        self.N = 2  # 2 = 512 bytes/sector
         self.gapLengthRW = 0x1B
         self.gapLengthFormat = 0x6C
         self.stepRate = (13 << 4) | 0  # srtHut
@@ -177,10 +204,12 @@ class FDC:
     def set120(self):
         self.numCyl = 0x50
         self.numHead = 2
-        self.numSec = 0x0F
+        #self.numSec = 0x0F
         self.sot = 1
         self.secCount = 0x0F
+        self.eot = self.secCount
         self.secSize = 0x200
+        self.N = 2  # 2 = 512 bytes/sector
         self.gapLengthRW = 0x1B
         self.gapLengthFormat = 0x54
         self.stepRate = (10 << 4) | 0  # srtHut
@@ -192,10 +221,12 @@ class FDC:
     def set111(self):
         self.numCyl = 0x28
         self.numHead = 2
-        self.numSec = 0x0F
+        #self.numSec = 0x0F
         self.sot = 1
         self.secCount = 0x0F
+        self.eot = self.secCount
         self.secSize = 0x200
+        self.N = 2  # 2 = 512 bytes/sector
         self.gapLengthRW = 0x1B
         self.gapLengthFormat = 0x54
         self.stepRate = (13 << 4) | 0  # srtHut
@@ -221,8 +252,8 @@ class FDC:
 
         self.dskBuf = blk
 
-    def writeDataBlock(self, count):
-        status = wd37c65_direct_ext.write_block(self.dskBuf, count)
+    def writeDataBlock(self, count, autoTerminate=True):
+        status = wd37c65_direct_ext.write_block(self.dskBuf, count, autoTerminate)
         if status not in [FRC_OK, FRC_WRITE_ERROR]:
             raise FDCException(status)
 
@@ -236,6 +267,9 @@ class FDC:
 
     def wait_msr(self, mask, val):
         return wd37c65_direct_ext.wait_msr(mask, val)
+
+    def get_msr(self):
+        return wd37c65_direct_ext.get_msr()
 
     def readResult(self):
         status, blk = wd37c65_direct_ext.read_result()
@@ -277,36 +311,90 @@ class FDC:
         self.resetFDC()
         self._clearDiskChange()
         self.track = 0xFF  # mark needing recal
+        self.fdcReady = True
 
-    def read(self, cyl=None, head=None, record=None):
-        if cyl:
+    def read(self, cyl=None, head=None, record=None, retries=0):
+        if cyl is not None:
             self.cyl = cyl
-        if head:
+        if head is not None:
             self.head = head
-        if record:
+        if record is not None:
             self.record = record
 
-        self._start()
-        if (self.fstRC != FRC_OK):
-            return self.fstRC
+        while (retries >= 0):
+            retries -= 1
+            self._start()
+            if (self.fstRC != FRC_OK):
+                print("*** read _start retry %02X" % self.fstRC, file=sys.stderr)
+                continue
 
-        self._setupIO(CFD_READ | 0B11100000)
-        return self._fop()
+            self._setupIO(CFD_READ | 0B11100000)
+            self._fop()
 
-    def write(self, cyl=None, head=None, record=None):
-        if cyl:
+            if self.fstRC == FRC_OK:
+                return self.fstRC
+
+            print("*** read retry %02X" % self.fstRC, file=sys.stderr)
+
+        # retries exhausted
+        return self.fstRC
+
+    def write(self, cyl=None, head=None, record=None, retries=0):
+        if cyl is not None:
             self.cyl = cyl
-        if head:
+        if head is not None:
             self.head = head
-        if record:
+        if record is not None:
             self.record = record
 
-        self._start()
-        if (self.fstRC != FRC_OK):
-            return self.fstRC
+        while (retries >= 0):
+            retries -= 1
+            self._start()
+            if (self.fstRC != FRC_OK):
+                print("*** write _start retry %02X" % self.fstRC, file=sys.stderr)
+                continue
 
-        self._setupIO(CFD_WRITE | 0B11000000)
-        return self._fop()
+            self._setupIO(CFD_WRITE | 0B11000000)
+            self._fop()
+
+            if self.fstRC == FRC_OK:
+                return self.fstRC
+
+            print("*** write retry %02X" % self.fstRC, file=sys.stderr)
+
+        # retries exhausted
+        return self.fstRC
+
+    def format(self, cyl=None, head=None, retries=0):
+        if cyl is not None:
+            self.cyl = cyl
+        if head is not None:
+            self.head = head
+
+        self.dskBuf = ""
+        for i in range(0, self.secCount):
+            self.dskBuf += chr(self.cyl)
+            self.dskBuf += chr(self.head)
+            self.dskBuf += chr(i+1)  # secNum
+            self.dskBuf += chr(self.N)  # 2 = 512 bytes per sector
+
+        while (retries >= 0):
+            retries -= 1
+            self._start()
+            if (self.fstRC != FRC_OK):
+                print("*** format _start retry %02X" % self.fstRC, file=sys.stderr)
+                continue
+
+            self._setupFormat(CFD_FMTTRK | 0B01000000)
+            self._fop()
+
+            if self.fstRC == FRC_OK:
+                return self.fstRC
+
+            print("*** format retry %02X" % self.fstRC, file=sys.stderr)
+
+        # retries exhausted
+        return self.fstRC
 
     def readID(self):
         self._setupCommand(CFD_READID | 0B01000000)
@@ -429,11 +517,19 @@ class FDC:
         self.fcpBuf[2] = self.cyl
         self.fcpBuf[3] = self.head
         self.fcpBuf[4] = self.record
-        self.fcpBuf[5] = 2 # sector size, 512 bytes
-        self.fcpBuf[6] = self.sot
+        self.fcpBuf[5] = self.N  # sector size, 2 = 512 bytes
+        self.fcpBuf[6] = self.eot
         self.fcpBuf[7] = self.gapLengthRW
         self.fcpBuf[8] = self.gapLengthFormat
         self.fcpLen = 9
+
+    def _setupFormat(self, cmd):
+        self._setupCommand(cmd)
+        self.fcpBuf[2] = self.N  # sector size, 2 = 512 bytes
+        self.fcpBuf[3] = self.secCount
+        self.fcpBuf[4] = self.gapLengthFormat
+        self.fcpBuf[5] = self.fillByte
+        self.fcpLen = 6
 
     def _cfdName(self, x):
         x = x & 0B1111
@@ -465,6 +561,15 @@ class FDC:
 
         self.drain()
 
+        time.sleep(0.001)
+
+        if (self.get_msr() & 0x90) == 0x90:
+            # Idiot-Check, this should never happen.
+            print("Holy Corrupted Floppy Drivers, Batman! We're in the middle of a read or write already!\n", file=sys.stderr)
+            self.fdcReady = False;
+            self.fstRC = FRC_INPROGRESS
+            return self.fstRC
+
         for i in range(0, self.fcpLen):
             # DIO=0 and RQM=1 indicate byte is ready to write
             self.fstRC = self.wait_msr(0xC0, 0x80)
@@ -478,10 +583,14 @@ class FDC:
         #    fcpStr = fcpStr + chr(self.fcpBuf[i])
         #wd37c65_direct_ext.write_command(fcpStr, self.fcpLen)
 
+        # execution phase
+
         if (self.fcpCmd == CFD_READ):
             self.readDataBlock(self.secSize)
         elif (self.fcpCmd == CFD_WRITE):
             self.writeDataBlock(self.secSize)
+        elif (self.fcpCmd == CFD_FMTTRK):
+            self.writeDataBlock(4 * self.secCount)
         elif (self.fcpCmd == CFD_READID):
             self.waitMSR(0xE0, 0xC0)
         else:

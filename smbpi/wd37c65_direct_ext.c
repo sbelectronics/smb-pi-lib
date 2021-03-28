@@ -3,7 +3,7 @@
 #include <unistd.h>
 #include <stdio.h>
 
-//#include "c_gpio.h"
+#include "micros.h"
 
 #define RESULT_OKAY 0
 #define RESULT_TIMEOUT_EXEC 0x14
@@ -12,6 +12,9 @@
 #define RESULT_TIMEOUT_READRES 0x18
 #define RESULT_READ_ERROR 0x19
 #define RESULT_WRITE_ERROR 0x20
+#define RESULT_SHORT 0x21
+#define RESULT_LONG 0x22
+#define RESULT_INPROCESS 0x23
 
 #define REG_MSR 0
 #define REG_DATA 1
@@ -34,10 +37,22 @@
 const int WD_DATAPINS[] = { 17, 18, 27, 22, 23, 24, 25, 4 };
 const int WD_DATAPINS_REVERSED[] = { 4, 25, 24, 23, 22, 27, 18, 17 };
 
+int EnableMyMicros = FALSE;
+
 #define myDigitalWrite(x,y) digitalWrite(x,y)
 #define myDigitalRead(x) digitalRead(x)
 #define myPinModeInput(x) pinMode(x,INPUT)
 #define myPinModeOutput(x) pinMode(x,OUTPUT)
+
+void myDelayMicroseconds(int x)
+{
+  if (EnableMyMicros) {
+    delayMicros(x);
+  } else {
+    // wiringpi
+    delayMicroseconds(x);
+  }
+}
 
 void wd_config_input(void)
 {
@@ -117,19 +132,49 @@ unsigned int wd_get_dc(void)
   return myDigitalRead(WD_DC);
 }
 
+void wd_pulse_cs_wr(unsigned int cs)
+{
+  unsigned int i;
+
+  wd_set_cs(cs, 0);
+  wd_set_wr(0);
+
+  // it's all fun and games until somebody loses an edge...
+  for (i=0; i<1000; i++) {
+    asm("nop");
+  }
+
+  wd_set_wr(1);
+  wd_set_cs(cs, 1);
+}
+
+unsigned int wd_pulse_cs_rd(unsigned int cs)
+{
+  unsigned int i, v;
+
+  wd_set_cs(cs, 0);
+  wd_set_rd(0);
+
+  // it's all fun and games until somebody loses an edge...
+  for (i=0; i<1000; i++) {
+    asm("nop");
+  }
+
+  v = wd_get_data();
+
+  wd_set_rd(1);
+  wd_set_cs(cs, 1);
+
+  return v;
+}
+
 unsigned int wd_read_data(void) 
 {
   unsigned int data;
 
   wd_config_input();
   wd_set_addr(REG_DATA);
-  wd_set_cs(CS_FDC, 0);
-  wd_set_rd(0);
-  // see comment in dpmem_direct_read_block. Just to be safe...
-  myDigitalRead(WD_DATAPINS_REVERSED[0]);
-  data = wd_get_data();
-  wd_set_rd(1);
-  wd_set_cs(CS_FDC, 1);
+  data = wd_pulse_cs_rd(CS_FDC);
 
   return data;
 }
@@ -140,13 +185,7 @@ unsigned int wd_read_msr(void)
 
   wd_config_input();
   wd_set_addr(REG_MSR);
-  wd_set_cs(CS_FDC, 0);
-  wd_set_rd(0);
-  // see comment in dpmem_direct_read_block. Just to be safe...
-  myDigitalRead(WD_DATAPINS_REVERSED[0]);
-  msr = wd_get_data();
-  wd_set_rd(1);
-  wd_set_cs(CS_FDC, 1);
+  msr = wd_pulse_cs_rd(CS_FDC);
 
   return msr;
 }
@@ -157,10 +196,7 @@ unsigned int wd_write_data(unsigned int data)
   wd_config_output();
   wd_set_addr(REG_DATA);
   wd_set_data(data);
-  wd_set_cs(CS_FDC, 0);
-  wd_set_wr(0);
-  wd_set_wr(1);
-  wd_set_cs(CS_FDC, 1);
+  wd_pulse_cs_wr(CS_FDC);
   wd_config_input();
 
   return data;
@@ -172,10 +208,7 @@ unsigned int wd_write_dor(unsigned int data)
   wd_config_output();
   wd_set_addr(0);
   wd_set_data(data);
-  wd_set_cs(CS_DOR, 0);
-  wd_set_wr(0);
-  wd_set_wr(1);
-  wd_set_cs(CS_DOR, 1);
+  wd_pulse_cs_wr(CS_DOR);
   wd_config_input();
 
   return data;
@@ -187,10 +220,7 @@ unsigned int wd_write_dcr(unsigned int data)
   wd_config_output();
   wd_set_addr(0);
   wd_set_data(data);
-  wd_set_cs(CS_DCR, 0);
-  wd_set_wr(0);
-  wd_set_wr(1);
-  wd_set_cs(CS_DCR, 1);
+  wd_pulse_cs_wr(CS_DCR);
   wd_config_input();
 
   return data;
@@ -204,7 +234,7 @@ unsigned int wd_wait_msr(unsigned int mask, unsigned int val)
   wd_config_input();
   while (TRUE) {
       // wiringPi
-      delayMicroseconds(3);
+      myDelayMicroseconds(3);
 
       msr = wd_read_msr();
       if ((msr & mask) == val) {
@@ -227,7 +257,7 @@ unsigned int wd_drain(void)
   wd_config_input();
   while (max > 0) {
       // wiringPi
-      delayMicroseconds(10);
+      myDelayMicroseconds(10);
 
       msr = wd_read_msr();
       if ((msr & 0xC0) != 0xC0) {
@@ -271,11 +301,11 @@ void wd_init(void)
     pullUpDnControl(WD_DATAPINS[i], PUD_DOWN);
   }
 
-  delayMicroseconds(10);
+  myDelayMicroseconds(10);
   myDigitalWrite(WD_RESET, 1); // assert reset
-  delayMicroseconds(100);
+  myDelayMicroseconds(100);
   myDigitalWrite(WD_RESET, 0); // deassert reset
-  delayMicroseconds(1000);
+  myDelayMicroseconds(1000);
 }
 
 void wd_reset(unsigned int dor)
@@ -283,20 +313,20 @@ void wd_reset(unsigned int dor)
     int i;
 
     wd_write_dor(0);
-    delayMicroseconds(17);
+    myDelayMicroseconds(17);
     wd_write_dor(dor);
 
     // 2.4ms delay    
     for (i=0; i<240; i++) {
       // wiringPi
-      delayMicroseconds(10);
+      myDelayMicroseconds(10);
     }
 }
 
 void wd_pulse_dack(void)
 {
   myDigitalWrite(WD_DACK, 0);
-  delayMicroseconds(1);
+  myDelayMicroseconds(1);
   myDigitalWrite(WD_DACK, 1);
 }
 
@@ -385,10 +415,7 @@ static PyObject *wd_direct_write_byte(PyObject *self, PyObject *args)
   wd_config_output();
   wd_set_addr(addr);
   wd_set_data(data);
-  wd_set_cs(cs, 0);
-  wd_set_wr(0);
-  wd_set_wr(1);
-  wd_set_cs(cs, 1);
+  wd_pulse_cs_wr(cs);
   wd_config_input();
   return Py_BuildValue("");
 }
@@ -444,6 +471,7 @@ static PyObject *wd_direct_read_block(PyObject *self, PyObject *args)
       if (status!=0) {
         msr = wd_read_msr();
         if (msr == 0xD0) {
+            // d0 indicates fdc wants us to read a byte
             fprintf(stderr, "read_block aborting on index %d with read error\n", i);
             return Py_BuildValue("is#", RESULT_READ_ERROR, buf, count);
         } else {
@@ -476,7 +504,7 @@ static PyObject *wd_direct_read_result(PyObject *self, PyObject *args)
       unsigned int msr;
 
       // wiringPi
-      delayMicroseconds(10);      
+      myDelayMicroseconds(10);      
       
       msr = wd_read_msr();
       //fprintf(stderr, "readRes msr %2X\n", msr);
@@ -504,17 +532,19 @@ static PyObject *wd_direct_write_block(PyObject *self, PyObject *args)
 {
   const char *buf;
   unsigned int buf_len, count;
+  unsigned int autoTerminate;
   int i;
 
-  if (!PyArg_ParseTuple(args, "s#i", &buf, &buf_len, &count)) {
+  if (!PyArg_ParseTuple(args, "s#ii", &buf, &buf_len, &count, &autoTerminate)) {
     return NULL;
   }
 
   for (i=0; i<count; i++) {
-      unsigned int status = wd_wait_msr(0xFF, 0xB0);  // suspicious
+      unsigned int status = wd_wait_msr(0xFF, 0xB0); // RQM=1, DIO=0, NDM=1, BUS=1
       if (status!=0) {
         unsigned int msr = wd_read_msr();
         if (msr == 0xD0) {
+            // d0 indicates fdc wants us to read a byte
             fprintf(stderr, "write_block aborting on index %d with write error\n", i);
             return Py_BuildValue("i", RESULT_WRITE_ERROR);
         } else {
@@ -527,8 +557,10 @@ static PyObject *wd_direct_write_block(PyObject *self, PyObject *args)
       buf++;
   }
 
-  // Terminate the transfer
-  wd_pulse_dack();
+  if (autoTerminate) {
+      // Terminate the transfer
+      wd_pulse_dack();
+  }
 
   return Py_BuildValue("i", 0);
 }
@@ -569,6 +601,16 @@ static PyObject *wd_direct_wait_msr(PyObject *self, PyObject *args)
   return Py_BuildValue("i", status);
 }
 
+static PyObject *wd_direct_get_msr(PyObject *self, PyObject *args)
+{
+  unsigned int msr;
+  if (!PyArg_ParseTuple(args, "")) {
+    return NULL;
+  }
+  msr = wd_read_msr();
+  return Py_BuildValue("i", msr);
+}
+
 static PyObject *wd_direct_drain(PyObject *self, PyObject *args)
 {
   unsigned int status;
@@ -577,6 +619,26 @@ static PyObject *wd_direct_drain(PyObject *self, PyObject *args)
   }
   status = wd_drain();
   return Py_BuildValue("i", status);
+}
+
+static PyObject *wd_direct_delay_microseconds(PyObject *self, PyObject *args)
+{
+  unsigned int amount;
+  if (!PyArg_ParseTuple(args, "i", &amount)) {
+    return NULL;
+  }
+  myDelayMicroseconds(amount);
+  return Py_BuildValue("i", 0);
+}
+
+static PyObject *wd_direct_enable_my_delay_micros(PyObject *self, PyObject *args)
+{
+  if (!PyArg_ParseTuple(args, "")) {
+    return NULL;
+  }
+  initMicros();
+  EnableMyMicros = TRUE;
+  return Py_BuildValue("i", 0);
 }
 
 static PyMethodDef wd_direct_methods[] = {
@@ -595,13 +657,17 @@ static PyMethodDef wd_direct_methods[] = {
   {"read_block", wd_direct_read_block, METH_VARARGS, "Read block"},
   {"write_block", wd_direct_write_block, METH_VARARGS, "Write block"},
   {"read_result", wd_direct_read_result, METH_VARARGS, "Read command result"},
+  {"get_msr", wd_direct_get_msr, METH_VARARGS, "get the msr"},
   {"wait_msr", wd_direct_wait_msr, METH_VARARGS, "wait for msr"},
+  {"delay_microseconds", wd_direct_delay_microseconds, METH_VARARGS, "delay microseconds"},
+  {"enable_my_delay_micros", wd_direct_enable_my_delay_micros, METH_VARARGS, "enable my delay_micros function"},
   {"drain", wd_direct_drain, METH_VARARGS, "drain data"},
   {NULL, NULL, 0, NULL}
 };
 
 PyMODINIT_FUNC initwd37c65_direct_ext(void)
 {
+  EnableMyMicros = FALSE;
   wiringPiSetupGpio();
 
   (void) Py_InitModule("wd37c65_direct_ext", wd_direct_methods);
